@@ -43,6 +43,7 @@ jobs:
 
       - name: Generate Android project files
         run: |
+          # settings.gradle
           cat > settings.gradle << 'EOF'
           pluginManagement {
               repositories {
@@ -61,6 +62,7 @@ jobs:
           include ':app'
           EOF
 
+          # build.gradle (project)
           cat > build.gradle << 'EOF'
           buildscript {
               ext {
@@ -81,6 +83,7 @@ jobs:
           }
           EOF
 
+          # gradle-wrapper.properties
           cat > gradle/wrapper/gradle-wrapper.properties << 'EOF'
           distributionBase=GRADLE_USER_HOME
           distributionPath=wrapper/dists
@@ -89,6 +92,7 @@ jobs:
           zipStorePath=wrapper/dists
           EOF
 
+          # app/build.gradle
           cat > app/build.gradle << 'EOF'
           plugins {
               id 'com.android.application'
@@ -160,6 +164,7 @@ jobs:
           }
           EOF
 
+          # AndroidManifest.xml (without icon reference)
           cat > app/src/main/AndroidManifest.xml << 'EOF'
           <?xml version="1.0" encoding="utf-8"?>
           <manifest xmlns:android="http://schemas.android.com/apk/res/android"
@@ -170,7 +175,6 @@ jobs:
 
               <application
                   android:allowBackup="true"
-                  android:icon="@mipmap/ic_launcher"
                   android:label="@string/app_name"
                   android:theme="@style/Theme.VideoPlayer">
                   <activity
@@ -185,6 +189,7 @@ jobs:
           </manifest>
           EOF
 
+          # res/values/strings.xml
           mkdir -p app/src/main/res/values
           cat > app/src/main/res/values/strings.xml << 'EOF'
           <resources>
@@ -192,6 +197,7 @@ jobs:
           </resources>
           EOF
 
+          # res/values/themes.xml
           cat > app/src/main/res/values/themes.xml << 'EOF'
           <resources>
               <style name="Theme.VideoPlayer" parent="android:Theme.Material.Light.NoActionBar">
@@ -281,11 +287,11 @@ jobs:
           mkdir -p app/src/main/cpp/libs/arm64-v8a
           cp ffmpeg-6.0/install/lib/*.so app/src/main/cpp/libs/arm64-v8a/
 
-      - name: Create native wrapper and CMakeLists.txt
+      - name: Create native wrapper and CMakeLists.txt (fixed)
         run: |
           cat > app/src/main/cpp/ffmpeg_wrapper.cpp << 'EOF'
           #include <jni.h>
-          #include <string>
+          #include <cstring>
           #include <android/bitmap.h>
           #include <android/log.h>
 
@@ -312,10 +318,12 @@ jobs:
 
               if (avformat_open_input(&fmt_ctx, filename, nullptr, nullptr) < 0) {
                   LOGE("Could not open input");
+                  env->ReleaseStringUTFChars(path, filename);
                   return JNI_FALSE;
               }
               if (avformat_find_stream_info(fmt_ctx, nullptr) < 0) {
                   LOGE("Could not find stream info");
+                  env->ReleaseStringUTFChars(path, filename);
                   return JNI_FALSE;
               }
 
@@ -328,12 +336,14 @@ jobs:
               }
               if (video_stream_index == -1) {
                   LOGE("No video stream");
+                  env->ReleaseStringUTFChars(path, filename);
                   return JNI_FALSE;
               }
 
               const AVCodec* codec = avcodec_find_decoder(video_stream->codecpar->codec_id);
               if (!codec) {
                   LOGE("Unsupported codec");
+                  env->ReleaseStringUTFChars(path, filename);
                   return JNI_FALSE;
               }
 
@@ -341,6 +351,7 @@ jobs:
               avcodec_parameters_to_context(codec_ctx, video_stream->codecpar);
               if (avcodec_open2(codec_ctx, codec, nullptr) < 0) {
                   LOGE("Could not open codec");
+                  env->ReleaseStringUTFChars(path, filename);
                   return JNI_FALSE;
               }
 
@@ -358,7 +369,7 @@ jobs:
           Java_com_example_videoplayer_MainActivity_getFrameAt(JNIEnv* env, jobject /*this*/, jlong us) {
               if (!fmt_ctx || !codec_ctx) return nullptr;
 
-              int64_t timestamp = us;
+              int64_t timestamp = us; // microseconds
               av_seek_frame(fmt_ctx, video_stream_index, timestamp, AVSEEK_FLAG_BACKWARD);
 
               AVPacket* pkt = av_packet_alloc();
@@ -374,7 +385,7 @@ jobs:
               while (av_read_frame(fmt_ctx, pkt) >= 0) {
                   if (pkt->stream_index == video_stream_index) {
                       if (avcodec_send_packet(codec_ctx, pkt) == 0) {
-                          if (avcodec_receive_frame(codec_ctx, frame) == 0) {
+                          while (avcodec_receive_frame(codec_ctx, frame) == 0) {
                               sws_scale(sws_ctx, frame->data, frame->linesize,
                                         0, codec_ctx->height,
                                         rgb_frame->data, rgb_frame->linesize);
@@ -399,20 +410,20 @@ jobs:
                               AndroidBitmap_lockPixels(env, bitmap, &pixels);
                               uint8_t* src = rgb_frame->data[0];
                               uint8_t* dst = (uint8_t*)pixels;
-                              int stride = info.stride;
                               for (int y = 0; y < info.height; y++) {
-                                  memcpy(dst + y * stride, src + y * rgb_frame->linesize[0], info.width * 4);
+                                  std::memcpy(dst + y * info.stride, src + y * rgb_frame->linesize[0], info.width * 4);
                               }
                               AndroidBitmap_unlockPixels(env, bitmap);
 
                               env->DeleteLocalRef(config_name);
-                              break;
+                              goto cleanup; // break out of both loops
                           }
                       }
                   }
                   av_packet_unref(pkt);
               }
 
+          cleanup:
               av_packet_free(&pkt);
               av_frame_free(&frame);
               av_frame_free(&rgb_frame);

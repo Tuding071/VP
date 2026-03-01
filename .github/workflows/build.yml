@@ -201,11 +201,16 @@ jobs:
       - name: Copy player.kt to source
         run: cp player.kt app/src/main/java/com/example/videoplayer/MainActivity.kt
 
-      - name: Generate Gradle wrapper
+      - name: Download Gradle 8.6 and generate wrapper
         run: |
-          sudo apt update
-          sudo apt install -y gradle
+          wget -q https://services.gradle.org/distributions/gradle-8.6-bin.zip
+          unzip -q gradle-8.6-bin.zip
+          GRADLE_HOME=$PWD/gradle-8.6
+          echo "GRADLE_HOME=$GRADLE_HOME" >> $GITHUB_ENV
+          echo "$GRADLE_HOME/bin" >> $GITHUB_PATH
+          # Generate wrapper using this gradle (creates gradlew, gradle/wrapper/gradle-wrapper.jar)
           gradle wrapper
+          chmod +x gradlew
 
       - name: Build and install FFmpeg for arm64
         run: |
@@ -464,7 +469,6 @@ jobs:
 
       - name: Build APK
         run: |
-          chmod +x gradlew
           ./gradlew assembleDebug
 
       - name: Upload APK artifact

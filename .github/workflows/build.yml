@@ -212,6 +212,7 @@ jobs:
           CXX=$TOOLCHAIN/bin/${TARGET}${API}-clang++
           AR=$TOOLCHAIN/bin/llvm-ar
           RANLIB=$TOOLCHAIN/bin/llvm-ranlib
+          STRIP=$TOOLCHAIN/bin/llvm-strip
 
           # Download FFmpeg
           wget -q https://ffmpeg.org/releases/ffmpeg-6.0.tar.bz2
@@ -228,6 +229,7 @@ jobs:
               --cxx=$CXX \
               --ar=$AR \
               --ranlib=$RANLIB \
+              --strip=$STRIP \
               --sysroot=$SYSROOT \
               --extra-cflags="-fPIC -O3" \
               --disable-static \

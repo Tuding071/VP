@@ -218,7 +218,7 @@ jobs:
           tar xjf ffmpeg-6.0.tar.bz2
           cd ffmpeg-6.0
 
-          # Configure minimal build (only video decoders, no audio)
+          # Configure minimal build (only video decoders, no audio, no Vulkan/VAAPI/CUDA)
           ./configure \
               --prefix=$(pwd)/install \
               --enable-cross-compile \
@@ -257,7 +257,10 @@ jobs:
               --disable-bsfs \
               --disable-devices \
               --disable-filters \
-              --disable-hwaccels
+              --disable-hwaccels \
+              --disable-vulkan \
+              --disable-vaapi \
+              --disable-cuda
 
           make -j$(nproc)
           make install

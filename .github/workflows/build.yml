@@ -201,6 +201,12 @@ jobs:
       - name: Copy player.kt to source
         run: cp player.kt app/src/main/java/com/example/videoplayer/MainActivity.kt
 
+      - name: Generate Gradle wrapper
+        run: |
+          sudo apt update
+          sudo apt install -y gradle
+          gradle wrapper
+
       - name: Build and install FFmpeg for arm64
         run: |
           NDK=$ANDROID_NDK_HOME

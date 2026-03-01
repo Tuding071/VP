@@ -32,9 +32,17 @@ jobs:
           mkdir -p app/src/main/res/drawable
           mkdir -p gradle/wrapper
 
+      - name: Generate gradle.properties
+        run: |
+          cat > gradle.properties << 'EOF'
+          android.useAndroidX=true
+          android.enableJetifier=true
+          org.gradle.jvmargs=-Xmx2048m
+          kotlin.code.style=official
+          EOF
+
       - name: Generate Android project files
         run: |
-          # settings.gradle
           cat > settings.gradle << 'EOF'
           pluginManagement {
               repositories {
@@ -53,7 +61,6 @@ jobs:
           include ':app'
           EOF
 
-          # build.gradle (project)
           cat > build.gradle << 'EOF'
           buildscript {
               ext {
@@ -74,7 +81,6 @@ jobs:
           }
           EOF
 
-          # gradle-wrapper.properties
           cat > gradle/wrapper/gradle-wrapper.properties << 'EOF'
           distributionBase=GRADLE_USER_HOME
           distributionPath=wrapper/dists
@@ -83,7 +89,6 @@ jobs:
           zipStorePath=wrapper/dists
           EOF
 
-          # app/build.gradle
           cat > app/build.gradle << 'EOF'
           plugins {
               id 'com.android.application'
@@ -155,7 +160,6 @@ jobs:
           }
           EOF
 
-          # AndroidManifest.xml
           cat > app/src/main/AndroidManifest.xml << 'EOF'
           <?xml version="1.0" encoding="utf-8"?>
           <manifest xmlns:android="http://schemas.android.com/apk/res/android"
@@ -181,7 +185,6 @@ jobs:
           </manifest>
           EOF
 
-          # res/values/strings.xml
           mkdir -p app/src/main/res/values
           cat > app/src/main/res/values/strings.xml << 'EOF'
           <resources>
@@ -189,7 +192,6 @@ jobs:
           </resources>
           EOF
 
-          # res/values/themes.xml
           cat > app/src/main/res/values/themes.xml << 'EOF'
           <resources>
               <style name="Theme.VideoPlayer" parent="android:Theme.Material.Light.NoActionBar">
@@ -208,7 +210,6 @@ jobs:
           GRADLE_HOME=$PWD/gradle-8.6
           echo "GRADLE_HOME=$GRADLE_HOME" >> $GITHUB_ENV
           echo "$GRADLE_HOME/bin" >> $GITHUB_PATH
-          # Generate wrapper using this gradle (creates gradlew, gradle/wrapper/gradle-wrapper.jar)
           gradle wrapper
           chmod +x gradlew
 
@@ -225,12 +226,10 @@ jobs:
           RANLIB=$TOOLCHAIN/bin/llvm-ranlib
           STRIP=$TOOLCHAIN/bin/llvm-strip
 
-          # Download FFmpeg
           wget -q https://ffmpeg.org/releases/ffmpeg-6.0.tar.bz2
           tar xjf ffmpeg-6.0.tar.bz2
           cd ffmpeg-6.0
 
-          # Configure minimal build (only video decoders, no audio, no Vulkan/VAAPI/CUDA)
           ./configure \
               --prefix=$(pwd)/install \
               --enable-cross-compile \
@@ -279,13 +278,11 @@ jobs:
           make install
           cd ..
 
-          # Copy built libraries to cpp/libs/arm64-v8a
           mkdir -p app/src/main/cpp/libs/arm64-v8a
           cp ffmpeg-6.0/install/lib/*.so app/src/main/cpp/libs/arm64-v8a/
 
       - name: Create native wrapper and CMakeLists.txt
         run: |
-          # Native wrapper (ffmpeg_wrapper.cpp)
           cat > app/src/main/cpp/ffmpeg_wrapper.cpp << 'EOF'
           #include <jni.h>
           #include <string>
@@ -313,7 +310,6 @@ jobs:
               const char* filename = env->GetStringUTFChars(path, nullptr);
               LOGI("Opening file: %s", filename);
 
-              // Open file
               if (avformat_open_input(&fmt_ctx, filename, nullptr, nullptr) < 0) {
                   LOGE("Could not open input");
                   return JNI_FALSE;
@@ -323,7 +319,6 @@ jobs:
                   return JNI_FALSE;
               }
 
-              // Find video stream
               for (unsigned i = 0; i < fmt_ctx->nb_streams; i++) {
                   if (fmt_ctx->streams[i]->codecpar->codec_type == AVMEDIA_TYPE_VIDEO) {
                       video_stream_index = i;
@@ -336,14 +331,12 @@ jobs:
                   return JNI_FALSE;
               }
 
-              // Find decoder
               const AVCodec* codec = avcodec_find_decoder(video_stream->codecpar->codec_id);
               if (!codec) {
                   LOGE("Unsupported codec");
                   return JNI_FALSE;
               }
 
-              // Allocate codec context
               codec_ctx = avcodec_alloc_context3(codec);
               avcodec_parameters_to_context(codec_ctx, video_stream->codecpar);
               if (avcodec_open2(codec_ctx, codec, nullptr) < 0) {
@@ -351,7 +344,6 @@ jobs:
                   return JNI_FALSE;
               }
 
-              // Prepare scaling context (RGB for bitmap)
               sws_ctx = sws_getContext(
                   codec_ctx->width, codec_ctx->height, codec_ctx->pix_fmt,
                   codec_ctx->width, codec_ctx->height, AV_PIX_FMT_RGBA,
@@ -366,16 +358,13 @@ jobs:
           Java_com_example_videoplayer_MainActivity_getFrameAt(JNIEnv* env, jobject /*this*/, jlong us) {
               if (!fmt_ctx || !codec_ctx) return nullptr;
 
-              // Seek to keyframe before target timestamp
-              int64_t timestamp = us; // in microseconds
+              int64_t timestamp = us;
               av_seek_frame(fmt_ctx, video_stream_index, timestamp, AVSEEK_FLAG_BACKWARD);
 
-              // Decode until we get a frame near the target
               AVPacket* pkt = av_packet_alloc();
               AVFrame* frame = av_frame_alloc();
               AVFrame* rgb_frame = av_frame_alloc();
 
-              // Allocate buffer for RGB frame
               int num_bytes = av_image_get_buffer_size(AV_PIX_FMT_RGBA, codec_ctx->width, codec_ctx->height, 1);
               uint8_t* buffer = (uint8_t*)av_malloc(num_bytes);
               av_image_fill_arrays(rgb_frame->data, rgb_frame->linesize, buffer, AV_PIX_FMT_RGBA,
@@ -386,12 +375,10 @@ jobs:
                   if (pkt->stream_index == video_stream_index) {
                       if (avcodec_send_packet(codec_ctx, pkt) == 0) {
                           if (avcodec_receive_frame(codec_ctx, frame) == 0) {
-                              // Found a frame, convert to RGB
                               sws_scale(sws_ctx, frame->data, frame->linesize,
                                         0, codec_ctx->height,
                                         rgb_frame->data, rgb_frame->linesize);
 
-                              // Create Bitmap
                               jclass bitmap_cls = env->FindClass("android/graphics/Bitmap");
                               jmethodID create_bitmap = env->GetStaticMethodID(
                                   bitmap_cls, "createBitmap",
@@ -406,7 +393,6 @@ jobs:
                                   bitmap_cls, create_bitmap,
                                   codec_ctx->width, codec_ctx->height, config);
 
-                              // Copy pixels
                               AndroidBitmapInfo info;
                               AndroidBitmap_getInfo(env, bitmap, &info);
                               void* pixels;
@@ -442,12 +428,10 @@ jobs:
           }
           EOF
 
-          # CMakeLists.txt
           cat > app/src/main/cpp/CMakeLists.txt << 'EOF'
           cmake_minimum_required(VERSION 3.18)
           project("ffmpeg_wrapper")
 
-          # Set paths to FFmpeg libraries
           set(FFMPEG_LIB_DIR ${CMAKE_SOURCE_DIR}/libs/${ANDROID_ABI})
 
           add_library(ffmpeg_wrapper SHARED ffmpeg_wrapper.cpp)
@@ -456,7 +440,6 @@ jobs:
               ${CMAKE_SOURCE_DIR}/../../../ffmpeg-6.0/install/include
           )
 
-          # Find all .so files and link them
           file(GLOB FFMPEG_LIBS ${FFMPEG_LIB_DIR}/*.so)
 
           target_link_libraries(ffmpeg_wrapper
@@ -467,9 +450,9 @@ jobs:
           )
           EOF
 
-      - name: Build APK
+      - name: Build APK (with stacktrace)
         run: |
-          ./gradlew assembleDebug
+          ./gradlew assembleDebug --stacktrace
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
